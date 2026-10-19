@@ -129,8 +129,7 @@ impl Packet {
         }
 
         let header = &frame[AMS_TCP_HEADER_LEN..FRAME_HEADER_LEN];
-        let command_id =
-            u16::from_le_bytes(header[16..18].try_into().expect("2-byte command"));
+        let command_id = u16::from_le_bytes(header[16..18].try_into().expect("2-byte command"));
         let command =
             Command::from_id(command_id).ok_or(DecodeError::UnknownCommand(command_id))?;
         let data_len =
@@ -148,9 +147,7 @@ impl Packet {
                 error_code: u32::from_le_bytes(
                     header[24..28].try_into().expect("4-byte error code"),
                 ),
-                invoke_id: u32::from_le_bytes(
-                    header[28..32].try_into().expect("4-byte invoke id"),
-                ),
+                invoke_id: u32::from_le_bytes(header[28..32].try_into().expect("4-byte invoke id")),
             },
             data: frame[FRAME_HEADER_LEN..].to_vec(),
         })

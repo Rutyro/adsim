@@ -19,7 +19,11 @@ impl GantryCycle {
         };
 
         Self {
-            axes: [Axis::new(config()), Axis::new(config()), Axis::new(config())],
+            axes: [
+                Axis::new(config()),
+                Axis::new(config()),
+                Axis::new(config()),
+            ],
         }
     }
 
@@ -51,6 +55,13 @@ impl GantryCycle {
             let _ = symbols.write_f64(&format!("{prefix}.fActPos"), axis.position());
             let _ = symbols.write_i32(&format!("{prefix}.nError"), i32::from(axis.faulted()));
         }
+
+        let faulted = self.axes.iter().position(|axis| axis.faulted());
+        let _ = symbols.write_bool("MAIN.bAlarm", faulted.is_some());
+        let _ = symbols.write_i32(
+            "MAIN.nAlarmCode",
+            faulted.map_or(0, |axis| 1001 + axis as i32),
+        );
     }
 }
 

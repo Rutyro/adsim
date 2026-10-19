@@ -1,5 +1,5 @@
 use ams::{
-    AmsAddress, AmsHeader, Command, Packet, FLAG_REQUEST, FLAG_RESPONSE, read_device_info_response,
+    AmsAddress, AmsHeader, Command, FLAG_REQUEST, FLAG_RESPONSE, Packet, read_device_info_response,
     read_state_response,
 };
 
@@ -60,10 +60,7 @@ fn response_swaps_addresses_and_sets_response_flag() {
 
 #[test]
 fn read_state_response_is_result_state_and_device_state() {
-    assert_eq!(
-        read_state_response(0, 5, 0),
-        vec![0, 0, 0, 0, 5, 0, 0, 0]
-    );
+    assert_eq!(read_state_response(0, 5, 0), vec![0, 0, 0, 0, 5, 0, 0, 0]);
 }
 
 #[test]

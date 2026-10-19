@@ -1,12 +1,12 @@
 //! ADS/TCP server for the adsim gantry.
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use adsim_plc::GantryCycle;
 use adsim_symbols::SymbolTable;
 use ams::{
-    AMS_HEADER_LEN, AmsAddress, AmsHeader, Command, FLAG_RESPONSE, Packet,
+    AMS_HEADER_LEN, AmsAddress, AmsHeader, Command, FLAG_REQUEST, Packet,
     read_device_info_response, read_state_response,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -105,8 +105,10 @@ fn read_subscription_value(
 }
 
 fn notification(item: &Subscription, value: &[u8]) -> Packet {
-    let mut data = Vec::with_capacity(16 + value.len());
-    data.extend_from_slice(&(12 + value.len() as u32).to_le_bytes());
+    let mut data = Vec::with_capacity(28 + value.len());
+    data.extend_from_slice(&(20 + value.len() as u32).to_le_bytes());
+    data.extend_from_slice(&1u32.to_le_bytes());
+    data.extend_from_slice(&filetime().to_le_bytes());
     data.extend_from_slice(&1u32.to_le_bytes());
     data.extend_from_slice(&item.handle.to_le_bytes());
     data.extend_from_slice(&(value.len() as u32).to_le_bytes());
@@ -117,12 +119,19 @@ fn notification(item: &Subscription, value: &[u8]) -> Packet {
             target: item.client,
             source: item.server,
             command: Command::Notification,
-            flags: FLAG_RESPONSE,
+            flags: FLAG_REQUEST,
             error_code: 0,
-            invoke_id: 0,
+            invoke_id: item.handle,
         },
         data,
     }
+}
+
+fn filetime() -> u64 {
+    let since_epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    since_epoch.as_nanos() as u64 / 100 + 116_444_736_000_000_000
 }
 
 pub async fn serve(listener: TcpListener) -> std::io::Result<()> {
@@ -245,10 +254,15 @@ fn answer(
         Command::Read => answer_read(&request.data, symbols),
         Command::Write => answer_write(&request.data, symbols),
         Command::ReadWrite => answer_read_write(&request.data, symbols),
-        Command::AddNotification => match subscriptions.add(request, &request.data, symbols) {
-            Some(handle) => result_with_data(0, &handle.to_le_bytes()),
-            None => result_with_data(ADSERR_DEVICE_SERVICE_NOT_SUPPORTED, &[]),
-        },
+        Command::AddNotification => {
+            let (result, handle) = match subscriptions.add(request, &request.data, symbols) {
+                Some(handle) => (0, handle),
+                None => (ADSERR_DEVICE_SERVICE_NOT_SUPPORTED, 0),
+            };
+            let mut out = result.to_le_bytes().to_vec();
+            out.extend_from_slice(&handle.to_le_bytes());
+            out
+        }
         Command::DeleteNotification => {
             let handle = request
                 .data
@@ -323,7 +337,10 @@ fn answer_read_write(data: &[u8], symbols: &mut SymbolTable) -> Vec<u8> {
 
     match index_group {
         SYM_HNDBYNAME => {
-            let name = write_data.split(|byte| *byte == 0).next().unwrap_or(write_data);
+            let name = write_data
+                .split(|byte| *byte == 0)
+                .next()
+                .unwrap_or(write_data);
             let handle = std::str::from_utf8(name)
                 .ok()
                 .and_then(|name| symbols.handle(name));
@@ -333,7 +350,10 @@ fn answer_read_write(data: &[u8], symbols: &mut SymbolTable) -> Vec<u8> {
             }
         }
         SYM_INFOBYNAMEEX => {
-            let name = write_data.split(|byte| *byte == 0).next().unwrap_or(write_data);
+            let name = write_data
+                .split(|byte| *byte == 0)
+                .next()
+                .unwrap_or(write_data);
             match std::str::from_utf8(name)
                 .ok()
                 .and_then(|name| symbols.symbol(name))
@@ -411,7 +431,7 @@ async fn read_frame<R: AsyncRead + Unpin>(stream: &mut R) -> std::io::Result<Opt
     }
 
     let len = u32::from_le_bytes(head[2..6].try_into().expect("4-byte length")) as usize;
-    if len < AMS_HEADER_LEN || len > MAX_FRAME_LEN {
+    if !(AMS_HEADER_LEN..=MAX_FRAME_LEN).contains(&len) {
         return Ok(None);
     }
 

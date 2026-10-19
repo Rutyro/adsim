@@ -63,6 +63,29 @@ fn an_out_of_range_setpoint_sets_the_error_and_stops() {
 }
 
 #[test]
+fn a_soft_limit_fault_raises_and_clears_the_alarm() {
+    let mut table = SymbolTable::gantry();
+    let mut cycle = GantryCycle::new();
+    ready(&mut table);
+    table
+        .write_f64("MAIN.stAxisX.fSetPos", 400.0)
+        .expect("setpoint");
+    cycle.step(&mut table, 0.01);
+
+    assert_eq!(table.read_bool("MAIN.bAlarm"), Some(true));
+    assert_eq!(table.read_i32("MAIN.nAlarmCode"), Some(1001));
+
+    table
+        .write_f64("MAIN.stAxisX.fSetPos", 10.0)
+        .expect("setpoint");
+    table.write_bool("MAIN.bReset", true).expect("reset");
+    cycle.step(&mut table, 0.01);
+
+    assert_eq!(table.read_bool("MAIN.bAlarm"), Some(false));
+    assert_eq!(table.read_i32("MAIN.nAlarmCode"), Some(0));
+}
+
+#[test]
 fn reset_clears_the_error_after_the_setpoint_is_fixed() {
     let mut table = SymbolTable::gantry();
     let mut cycle = GantryCycle::new();
@@ -76,13 +99,9 @@ fn reset_clears_the_error_after_the_setpoint_is_fixed() {
     table
         .write_f64("MAIN.stAxisX.fSetPos", 20.0)
         .expect("setpoint");
-    table
-        .write_bool("MAIN.bReset", true)
-        .expect("reset");
+    table.write_bool("MAIN.bReset", true).expect("reset");
     cycle.step(&mut table, 0.01);
-    table
-        .write_bool("MAIN.bReset", false)
-        .expect("reset off");
+    table.write_bool("MAIN.bReset", false).expect("reset off");
     assert_eq!(table.read_i32("MAIN.stAxisX.nError"), Some(0));
 
     for _ in 0..2000 {

@@ -9,7 +9,10 @@ fn gantry_has_axis_symbols() {
     assert_eq!(symbol.type_name, "LREAL");
     assert_eq!(symbol.data_type, TYPE_LREAL);
     assert_eq!(
-        table.symbol("MAIN.stAxisX.nError").expect("symbol").data_type,
+        table
+            .symbol("MAIN.stAxisX.nError")
+            .expect("symbol")
+            .data_type,
         TYPE_INT32
     );
 }
@@ -39,22 +42,33 @@ fn upload_lists_names_and_types() {
     let mut position = 0;
 
     while position < blob.len() {
-        let entry_len =
-            u32::from_le_bytes(blob[position..position + 4].try_into().expect("entry length"))
-                as usize;
-        let name_len =
-            u16::from_le_bytes(blob[position + 24..position + 26].try_into().expect("name length"))
-                as usize;
-        let type_len =
-            u16::from_le_bytes(blob[position + 26..position + 28].try_into().expect("type length"))
-                as usize;
-        let comment_len =
-            u16::from_le_bytes(blob[position + 28..position + 30].try_into().expect("comment length"))
-                as usize;
+        let entry_len = u32::from_le_bytes(
+            blob[position..position + 4]
+                .try_into()
+                .expect("entry length"),
+        ) as usize;
+        let name_len = u16::from_le_bytes(
+            blob[position + 24..position + 26]
+                .try_into()
+                .expect("name length"),
+        ) as usize;
+        let type_len = u16::from_le_bytes(
+            blob[position + 26..position + 28]
+                .try_into()
+                .expect("type length"),
+        ) as usize;
+        let comment_len = u16::from_le_bytes(
+            blob[position + 28..position + 30]
+                .try_into()
+                .expect("comment length"),
+        ) as usize;
 
-        assert_eq!(entry_len, 30 + name_len + 1 + type_len + 1 + comment_len + 1);
-        let name =
-            std::str::from_utf8(&blob[position + 30..position + 30 + name_len]).expect("utf-8 name");
+        assert_eq!(
+            entry_len,
+            30 + name_len + 1 + type_len + 1 + comment_len + 1
+        );
+        let name = std::str::from_utf8(&blob[position + 30..position + 30 + name_len])
+            .expect("utf-8 name");
         names.push(name.to_string());
         position += entry_len;
     }
@@ -130,7 +144,9 @@ fn typed_accessors_read_and_write_values() {
     let mut table = SymbolTable::gantry();
 
     assert_eq!(table.read_f64("MAIN.stAxisX.fActPos"), Some(0.0));
-    table.write_f64("MAIN.stAxisX.fActPos", 1.25).expect("write f64");
+    table
+        .write_f64("MAIN.stAxisX.fActPos", 1.25)
+        .expect("write f64");
     assert_eq!(table.read_f64("MAIN.stAxisX.fActPos"), Some(1.25));
 
     assert_eq!(table.read_bool("MAIN.stAxisX.bEnabled"), Some(false));
@@ -140,7 +156,9 @@ fn typed_accessors_read_and_write_values() {
     assert_eq!(table.read_bool("MAIN.stAxisX.bEnabled"), Some(true));
 
     assert_eq!(table.read_i32("MAIN.stAxisX.nError"), Some(0));
-    table.write_i32("MAIN.stAxisX.nError", 7).expect("write i32");
+    table
+        .write_i32("MAIN.stAxisX.nError", 7)
+        .expect("write i32");
     assert_eq!(table.read_i32("MAIN.stAxisX.nError"), Some(7));
 
     assert_eq!(table.read_f64("MAIN.nope"), None);

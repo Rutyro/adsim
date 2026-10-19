@@ -20,26 +20,9 @@ public class ReadStateTests
         try
         {
             await WaitForPort(AdsimAddress, AdsimPort, TimeSpan.FromSeconds(10));
-
-            var localNetId = new AmsNetId("10.0.0.1.1.1");
-            var remoteNetId = new AmsNetId("127.0.0.2.1.1");
-            var loggerFactory = NullLoggerFactory.Instance;
-
-            var router = new AmsTcpIpRouter(localNetId, loggerFactory);
-            router.AddRoute(new Route("adsim", remoteNetId, new[] { AdsimAddress }));
-
-            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            var routerTask = router.StartAsync(cancel.Token);
+            var (router, routerTask, client, cancel) = await ConnectAsync();
             try
             {
-                while (!router.IsRunning)
-                {
-                    await Task.Delay(50, cancel.Token);
-                }
-
-                using var client = new AdsClient(loggerFactory);
-                client.Connect(new AmsAddress(remoteNetId, 851));
-
                 var result = await client.ReadStateAsync(cancel.Token);
                 Assert.Equal(AdsState.Run, result.State.AdsState);
 
@@ -51,6 +34,8 @@ public class ReadStateTests
             }
             finally
             {
+                client.Dispose();
+                cancel.Dispose();
                 router.Stop();
                 await routerTask.WaitAsync(TimeSpan.FromSeconds(5));
             }
@@ -63,6 +48,118 @@ public class ReadStateTests
                 adsim.WaitForExit(2000);
             }
         }
+    }
+
+    [Fact]
+    public async Task OfficialClientWritesMoveTheAxis()
+    {
+        using var adsim = StartAdsim();
+        try
+        {
+            await WaitForPort(AdsimAddress, AdsimPort, TimeSpan.FromSeconds(10));
+            var (router, routerTask, client, cancel) = await ConnectAsync();
+            try
+            {
+                client.WriteValue("MAIN.stAxisX.bEnabled", true);
+                client.WriteValue("MAIN.stAxisX.bHomed", true);
+                client.WriteValue("MAIN.stAxisX.fSetPos", 10.0);
+
+                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+                double position;
+                do
+                {
+                    await Task.Delay(50, cancel.Token);
+                    position = Convert.ToDouble(client.ReadValue("MAIN.stAxisX.fActPos"));
+                }
+                while (Math.Abs(position - 10.0) > 0.01 && DateTime.UtcNow < deadline);
+
+                Assert.InRange(position, 9.99, 10.01);
+            }
+            finally
+            {
+                client.Dispose();
+                cancel.Dispose();
+                router.Stop();
+                await routerTask.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+        }
+        finally
+        {
+            if (!adsim.HasExited)
+            {
+                adsim.Kill(entireProcessTree: true);
+                adsim.WaitForExit(2000);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task OfficialClientReceivesNotifications()
+    {
+        using var adsim = StartAdsim();
+        try
+        {
+            await WaitForPort(AdsimAddress, AdsimPort, TimeSpan.FromSeconds(10));
+            var (router, routerTask, client, cancel) = await ConnectAsync();
+            try
+            {
+                var notified = new TaskCompletionSource<double>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                client.AdsNotification += (_, e) =>
+                    notified.TrySetResult(BitConverter.ToDouble(e.Data.Span));
+
+                var handle = client.AddDeviceNotification(
+                    "MAIN.stAxisX.fSetPos",
+                    8,
+                    new NotificationSettings(AdsTransMode.OnChange, 50, 0),
+                    null);
+                client.WriteValue("MAIN.stAxisX.fSetPos", 12.5);
+
+                var value = await notified.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.Equal(12.5, value);
+                client.DeleteDeviceNotification(handle);
+            }
+            finally
+            {
+                client.Dispose();
+                cancel.Dispose();
+                router.Stop();
+                await routerTask.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+        }
+        finally
+        {
+            if (!adsim.HasExited)
+            {
+                adsim.Kill(entireProcessTree: true);
+                adsim.WaitForExit(2000);
+            }
+        }
+    }
+
+    private static async Task<(
+        AmsTcpIpRouter Router,
+        Task RouterTask,
+        AdsClient Client,
+        CancellationTokenSource Cancel)> ConnectAsync()
+    {
+        var localNetId = new AmsNetId("10.0.0.1.1.1");
+        var remoteNetId = new AmsNetId("127.0.0.2.1.1");
+        var loggerFactory = NullLoggerFactory.Instance;
+
+        var router = new AmsTcpIpRouter(localNetId, loggerFactory);
+        router.AddRoute(new Route("adsim", remoteNetId, new[] { AdsimAddress }));
+
+        var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var routerTask = router.StartAsync(cancel.Token);
+        while (!router.IsRunning)
+        {
+            await Task.Delay(50, cancel.Token);
+        }
+
+        var client = new AdsClient(loggerFactory);
+        client.Connect(new AmsAddress(remoteNetId, 851));
+        return (router, routerTask, client, cancel);
     }
 
     private static Process StartAdsim()

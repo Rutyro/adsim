@@ -17,7 +17,8 @@ clean-room from public documentation.
   `Beckhoff.TwinCAT.Ads` .NET client passes its integration test)
 - Simulated gantry: three axes with trapezoid motion, soft limits,
   enable/home/fault/reset
-- Value notifications on subscribed symbols
+- Value notifications on subscribed symbols, including a global alarm
+  (`MAIN.bAlarm`, `MAIN.nAlarmCode`; 1001/1002/1003 = X/Y/Z soft-limit fault)
 - Live browser view via SSE
 
 ## Run

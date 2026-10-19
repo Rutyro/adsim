@@ -1,6 +1,4 @@
-use ams::{
-    AmsAddress, AmsHeader, Command, FLAG_REQUEST, Packet,
-};
+use ams::{AmsAddress, AmsHeader, Command, FLAG_REQUEST, Packet};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 

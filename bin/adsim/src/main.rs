@@ -8,12 +8,8 @@ use tokio::net::{TcpListener, TcpStream};
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let mut args = std::env::args().skip(1);
-    let ads_addr = args
-        .next()
-        .unwrap_or_else(|| "127.0.0.1:48898".to_string());
-    let view_addr = args
-        .next()
-        .unwrap_or_else(|| "127.0.0.1:8080".to_string());
+    let ads_addr = args.next().unwrap_or_else(|| "127.0.0.1:48898".to_string());
+    let view_addr = args.next().unwrap_or_else(|| "127.0.0.1:8080".to_string());
 
     let symbols = Arc::new(Mutex::new(SymbolTable::gantry()));
 
@@ -91,7 +87,8 @@ fn snapshot(symbols: &Mutex<SymbolTable>) -> String {
     let x = symbols.read_f64("MAIN.stAxisX.fActPos").unwrap_or(0.0);
     let y = symbols.read_f64("MAIN.stAxisY.fActPos").unwrap_or(0.0);
     let z = symbols.read_f64("MAIN.stAxisZ.fActPos").unwrap_or(0.0);
-    format!("data: {{\"x\":{x:.3},\"y\":{y:.3},\"z\":{z:.3}}}\n\n")
+    let alarm = symbols.read_i32("MAIN.nAlarmCode").unwrap_or(0);
+    format!("data: {{\"x\":{x:.3},\"y\":{y:.3},\"z\":{z:.3},\"alarm\":{alarm}}}\n\n")
 }
 
 const PAGE: &str = r#"<!doctype html>
@@ -108,11 +105,13 @@ const PAGE: &str = r#"<!doctype html>
   .bar { height: 18px; background: #333; border-radius: 9px; overflow: hidden; margin-top: 6px; }
   .fill { height: 100%; width: 0; background: #4ade80; transition: width .1s linear; }
   .note { color: #888; font-size: .9rem; }
+  .alarm { display: none; background: #7f1d1d; color: #fecaca; padding: .6rem 1rem; border-radius: 6px; margin: 1rem 0; font-weight: 600; }
 </style>
 </head>
 <body>
 <h1>adsim gantry</h1>
 <p class="note">Live ADS simulation. Positions in mm, range 0-300.</p>
+<div class="alarm" id="alarm"></div>
 <div class="axis"><div class="label"><span>X</span><span id="x">0.000</span></div><div class="bar"><div class="fill" id="bx"></div></div></div>
 <div class="axis"><div class="label"><span>Y</span><span id="y">0.000</span></div><div class="bar"><div class="fill" id="by"></div></div></div>
 <div class="axis"><div class="label"><span>Z</span><span id="z">0.000</span></div><div class="bar"><div class="fill" id="bz"></div></div></div>
@@ -124,6 +123,9 @@ source.onmessage = (event) => {
     document.getElementById(axis).textContent = p[axis].toFixed(3);
     document.getElementById('b' + axis).style.width = Math.min(100, p[axis] / 300 * 100) + '%';
   }
+  const alarm = document.getElementById('alarm');
+  alarm.textContent = 'ALARM ' + p.alarm;
+  alarm.style.display = p.alarm ? 'block' : 'none';
 };
 </script>
 </body>

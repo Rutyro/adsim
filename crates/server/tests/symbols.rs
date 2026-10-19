@@ -1,6 +1,6 @@
 mod common;
 
-use ams::{Command, FLAG_RESPONSE, Packet};
+use ams::{Command, FLAG_REQUEST, Packet};
 use common::{receive, request, send, start_server};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -64,7 +64,7 @@ async fn reports_symbol_upload_info2() {
     let info = payload(&response);
     assert_eq!(
         u32::from_le_bytes(info[0..4].try_into().expect("symbol count")),
-        16
+        18
     );
     assert!(u32::from_le_bytes(info[4..8].try_into().expect("symbol size")) > 0);
     assert_eq!(&info[8..24], &[0u8; 16]);
@@ -104,11 +104,7 @@ async fn reads_and_writes_a_symbol_through_a_handle() {
     let addr = start_server().await;
     let mut stream = TcpStream::connect(addr).await.expect("connect");
 
-    let response = send(
-        &mut stream,
-        &handle_request("MAIN.stAxisX.fActPos", 10),
-    )
-    .await;
+    let response = send(&mut stream, &handle_request("MAIN.stAxisX.fActPos", 10)).await;
     assert_eq!(result(&response), 0);
     assert_eq!(length(&response), 4);
     let handle = u32::from_le_bytes(payload(&response)[0..4].try_into().expect("handle"));
@@ -116,11 +112,7 @@ async fn reads_and_writes_a_symbol_through_a_handle() {
 
     let response = send(
         &mut stream,
-        &request(
-            Command::Read,
-            11,
-            read_request(SYM_VALBYHND, handle, 8),
-        ),
+        &request(Command::Read, 11, read_request(SYM_VALBYHND, handle, 8)),
     )
     .await;
     assert_eq!(result(&response), 0);
@@ -139,11 +131,7 @@ async fn reads_and_writes_a_symbol_through_a_handle() {
 
     let response = send(
         &mut stream,
-        &request(
-            Command::Read,
-            13,
-            read_request(SYM_VALBYHND, handle, 8),
-        ),
+        &request(Command::Read, 13, read_request(SYM_VALBYHND, handle, 8)),
     )
     .await;
     assert_eq!(payload(&response), &1.5f64.to_le_bytes());
@@ -154,11 +142,7 @@ async fn releases_a_symbol_handle() {
     let addr = start_server().await;
     let mut stream = TcpStream::connect(addr).await.expect("connect");
 
-    let response = send(
-        &mut stream,
-        &handle_request("MAIN.stAxisX.fActPos", 20),
-    )
-    .await;
+    let response = send(&mut stream, &handle_request("MAIN.stAxisX.fActPos", 20)).await;
     let handle = u32::from_le_bytes(payload(&response)[0..4].try_into().expect("handle"));
 
     let response = send(
@@ -174,11 +158,7 @@ async fn releases_a_symbol_handle() {
 
     let response = send(
         &mut stream,
-        &request(
-            Command::Read,
-            22,
-            read_request(SYM_VALBYHND, handle, 8),
-        ),
+        &request(Command::Read, 22, read_request(SYM_VALBYHND, handle, 8)),
     )
     .await;
     assert_eq!(result(&response), 0x0701);
@@ -225,9 +205,9 @@ async fn add_notification_returns_result_and_handle() {
     let response = send(&mut stream, &request(Command::AddNotification, 26, data)).await;
 
     assert_eq!(result(&response), 0);
-    assert_eq!(length(&response), 4);
+    assert_eq!(response.data.len(), 8);
     assert_ne!(
-        u32::from_le_bytes(payload(&response)[0..4].try_into().expect("handle")),
+        u32::from_le_bytes(response.data[4..8].try_into().expect("handle")),
         0
     );
 }
@@ -246,8 +226,9 @@ async fn deletes_a_notification_handle() {
     data.extend_from_slice(&0u32.to_le_bytes());
     data.extend_from_slice(&0u32.to_le_bytes());
     let response = send(&mut stream, &request(Command::AddNotification, 27, data)).await;
+    assert_eq!(result(&response), 0);
     let notification_handle =
-        u32::from_le_bytes(payload(&response)[0..4].try_into().expect("notification handle"));
+        u32::from_le_bytes(response.data[4..8].try_into().expect("notification handle"));
 
     let response = send(
         &mut stream,
@@ -294,11 +275,7 @@ async fn write_value(stream: &mut TcpStream, handle: u32, value: &[u8]) {
 async fn read_value(stream: &mut TcpStream, handle: u32) -> Vec<u8> {
     let response = send(
         stream,
-        &request(
-            Command::Read,
-            102,
-            read_request(SYM_VALBYHND, handle, 8),
-        ),
+        &request(Command::Read, 102, read_request(SYM_VALBYHND, handle, 8)),
     )
     .await;
     assert_eq!(result(&response), 0);
@@ -320,9 +297,9 @@ async fn notifies_a_subscribed_symbol_when_it_changes() {
     data.extend_from_slice(&0u32.to_le_bytes());
     let response = send(&mut stream, &request(Command::AddNotification, 50, data)).await;
     assert_eq!(result(&response), 0);
-    assert_eq!(length(&response), 4);
+    assert_eq!(response.data.len(), 8);
     let notification_handle =
-        u32::from_le_bytes(payload(&response)[0..4].try_into().expect("notification handle"));
+        u32::from_le_bytes(response.data[4..8].try_into().expect("notification handle"));
 
     stream
         .write_all(&request(
@@ -340,26 +317,34 @@ async fn notifies_a_subscribed_symbol_when_it_changes() {
         }
         assert_eq!(result(&packet), 0);
     };
-    assert_eq!(notification.header.flags, FLAG_RESPONSE);
+    assert_eq!(notification.header.flags, FLAG_REQUEST);
 
     let data = &notification.data;
     assert_eq!(
         u32::from_le_bytes(data[0..4].try_into().expect("payload length")),
-        20
+        28
     );
     assert_eq!(
         u32::from_le_bytes(data[4..8].try_into().expect("stamp count")),
         1
     );
+    assert_ne!(
+        u64::from_le_bytes(data[8..16].try_into().expect("timestamp")),
+        0
+    );
     assert_eq!(
-        u32::from_le_bytes(data[8..12].try_into().expect("notification handle")),
+        u32::from_le_bytes(data[16..20].try_into().expect("sample count")),
+        1
+    );
+    assert_eq!(
+        u32::from_le_bytes(data[20..24].try_into().expect("notification handle")),
         notification_handle
     );
     assert_eq!(
-        u32::from_le_bytes(data[12..16].try_into().expect("sample size")),
+        u32::from_le_bytes(data[24..28].try_into().expect("sample size")),
         8
     );
-    assert_eq!(&data[16..24], &1.25f64.to_le_bytes());
+    assert_eq!(&data[28..36], &1.25f64.to_le_bytes());
 }
 
 #[tokio::test]

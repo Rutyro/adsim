@@ -124,6 +124,22 @@ impl SymbolTable {
             vec![0],
             offset,
         );
+        offset += 8;
+        table.add(
+            "MAIN.bAlarm".to_string(),
+            "BOOL",
+            TYPE_BOOL,
+            vec![0],
+            offset,
+        );
+        offset += 8;
+        table.add(
+            "MAIN.nAlarmCode".to_string(),
+            "INT32",
+            TYPE_INT32,
+            0i32.to_le_bytes().to_vec(),
+            offset,
+        );
 
         table
     }
@@ -159,10 +175,7 @@ impl SymbolTable {
     }
 
     pub fn handle(&mut self, name: &str) -> Option<u32> {
-        let index = self
-            .symbols
-            .iter()
-            .position(|symbol| symbol.name == name)?;
+        let index = self.symbols.iter().position(|symbol| symbol.name == name)?;
         if let Some((handle, _)) = self
             .handles
             .iter()
@@ -191,13 +204,15 @@ impl SymbolTable {
         self.write_symbol(index, data)
     }
 
-    pub fn read_by_index(&self, index_group: u32, index_offset: u32, length: u32) -> Option<Vec<u8>> {
-        let symbol = self
-            .symbols
-            .iter()
-            .find(|symbol| {
-                symbol.index_group == index_group && symbol.index_offset == index_offset
-            })?;
+    pub fn read_by_index(
+        &self,
+        index_group: u32,
+        index_offset: u32,
+        length: u32,
+    ) -> Option<Vec<u8>> {
+        let symbol = self.symbols.iter().find(|symbol| {
+            symbol.index_group == index_group && symbol.index_offset == index_offset
+        })?;
         let length = (length as usize).min(symbol.data.len());
         Some(symbol.data[..length].to_vec())
     }
