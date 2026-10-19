@@ -20,6 +20,8 @@ clean-room from public documentation.
   enable/home/fault/reset
 - Value notifications on subscribed symbols, including a global alarm
   (`MAIN.bAlarm`, `MAIN.nAlarmCode`; 1001/1002/1003 = X/Y/Z soft-limit fault)
+- `.tmc` import: flat PLC symbols become readable/writable memory; custom
+  types are served as raw bytes
 - Live browser view via SSE
 
 ## Run
@@ -31,7 +33,9 @@ cargo run -p adsim
 - ADS: `127.0.0.1:48898`
 - View: <http://127.0.0.1:8080/>
 
-Arguments: `adsim [ads_addr] [view_addr]`.
+Arguments: `adsim [ads_addr] [view_addr]`. Add `--tmc path/to/plc.tmc` to
+serve the flat symbols from a TwinCAT module class file alongside the
+built-in gantry.
 
 ## Drive it with an agent
 

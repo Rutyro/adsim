@@ -1,6 +1,10 @@
 //! Symbol table and ADS symbol upload encoding for the built-in gantry.
 
+mod tmc;
+
 use std::collections::HashMap;
+
+pub use tmc::{ImportSymbol, TmcError, parse_tmc};
 
 pub const INDEX_GROUP: u32 = 0x4020;
 pub const TYPE_BOOL: u32 = 33;
@@ -142,6 +146,31 @@ impl SymbolTable {
         );
 
         table
+    }
+
+    /// Append imported symbols as writable memory. Names that already exist
+    /// are skipped, so the built-in gantry symbols always win.
+    pub fn add_imported(&mut self, imported: &[ImportSymbol]) {
+        let mut offset = self
+            .symbols
+            .iter()
+            .map(|symbol| symbol.index_offset + 8)
+            .max()
+            .unwrap_or(0);
+
+        for symbol in imported {
+            if self.symbol(&symbol.name).is_some() {
+                continue;
+            }
+            self.add(
+                symbol.name.clone(),
+                &symbol.type_name,
+                symbol.data_type,
+                vec![0u8; symbol.size as usize],
+                offset,
+            );
+            offset += 8;
+        }
     }
 
     fn add(

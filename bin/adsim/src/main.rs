@@ -1,17 +1,46 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use adsim_symbols::SymbolTable;
+use adsim_symbols::{SymbolTable, parse_tmc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    let mut positional = Vec::new();
+    let mut tmc_path = None;
     let mut args = std::env::args().skip(1);
-    let ads_addr = args.next().unwrap_or_else(|| "127.0.0.1:48898".to_string());
-    let view_addr = args.next().unwrap_or_else(|| "127.0.0.1:8080".to_string());
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--tmc" => match args.next() {
+                Some(path) => tmc_path = Some(path),
+                None => {
+                    eprintln!("--tmc needs a path");
+                    std::process::exit(2);
+                }
+            },
+            other => positional.push(other.to_string()),
+        }
+    }
+    let ads_addr = positional
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "127.0.0.1:48898".to_string());
+    let view_addr = positional
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| "127.0.0.1:8080".to_string());
 
-    let symbols = Arc::new(Mutex::new(SymbolTable::gantry()));
+    let mut table = SymbolTable::gantry();
+    if let Some(path) = tmc_path {
+        let xml = std::fs::read_to_string(&path)?;
+        let imported = parse_tmc(&xml)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        let count = imported.len();
+        table.add_imported(&imported);
+        println!("loaded {count} symbols from {path}");
+    }
+    let symbols = Arc::new(Mutex::new(table));
 
     let ads_listener = TcpListener::bind(&ads_addr).await?;
     println!("adsim ADS on {}", ads_listener.local_addr()?);
