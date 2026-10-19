@@ -104,7 +104,7 @@ async fn reads_and_writes_a_symbol_through_a_handle() {
     let addr = start_server().await;
     let mut stream = TcpStream::connect(addr).await.expect("connect");
 
-    let response = send(&mut stream, &handle_request("MAIN.stAxisX.fActPos", 10)).await;
+    let response = send(&mut stream, &handle_request("MAIN.stAxisX.fSetPos", 10)).await;
     assert_eq!(result(&response), 0);
     assert_eq!(length(&response), 4);
     let handle = u32::from_le_bytes(payload(&response)[0..4].try_into().expect("handle"));
