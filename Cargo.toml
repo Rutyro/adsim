@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ams", "crates/server", "bin/adsim"]
+members = ["crates/ams", "crates/server", "bin/adsim", "crates/symbols"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,4 +10,5 @@ license = "MIT"
 [workspace.dependencies]
 ams = { path = "crates/ams" }
 adsim-server = { path = "crates/server" }
+adsim-symbols = { path = "crates/symbols" }
 tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time"] }

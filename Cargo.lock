@@ -14,9 +14,14 @@ dependencies = [
 name = "adsim-server"
 version = "0.1.0"
 dependencies = [
+ "adsim-symbols",
  "ams",
  "tokio",
 ]
+
+[[package]]
+name = "adsim-symbols"
+version = "0.1.0"
 
 [[package]]
 name = "ams"
