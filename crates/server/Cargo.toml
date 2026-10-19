@@ -7,3 +7,6 @@ license.workspace = true
 [dependencies]
 ams.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+ams.workspace = true
