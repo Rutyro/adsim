@@ -1,0 +1,16 @@
+[package]
+name = "adsim-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+adsim-client.workspace = true
+rmcp = { version = "3.5.1", features = ["server", "transport-io", "macros"] }
+schemars = { version = "1", features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+adsim-server.workspace = true

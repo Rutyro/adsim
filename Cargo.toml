@@ -1,6 +1,15 @@
 [workspace]
 resolver = "3"
-members = ["crates/ams", "crates/server", "bin/adsim", "crates/symbols", "crates/axis", "crates/plc"]
+members = [
+    "crates/ams",
+    "crates/server",
+    "bin/adsim",
+    "crates/symbols",
+    "crates/axis",
+    "crates/plc",
+    "crates/client",
+    "crates/mcp",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,4 +22,7 @@ adsim-server = { path = "crates/server" }
 adsim-symbols = { path = "crates/symbols" }
 adsim-axis = { path = "crates/axis" }
 adsim-plc = { path = "crates/plc" }
-tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time", "sync"] }
+adsim-client = { path = "crates/client" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["net", "io-util", "io-std", "process", "rt-multi-thread", "macros", "time", "sync"] }
