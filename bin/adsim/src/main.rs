@@ -117,7 +117,24 @@ fn snapshot(symbols: &Mutex<SymbolTable>) -> String {
     let y = symbols.read_f64("MAIN.stAxisY.fActPos").unwrap_or(0.0);
     let z = symbols.read_f64("MAIN.stAxisZ.fActPos").unwrap_or(0.0);
     let alarm = symbols.read_i32("MAIN.nAlarmCode").unwrap_or(0);
-    format!("data: {{\"x\":{x:.3},\"y\":{y:.3},\"z\":{z:.3},\"alarm\":{alarm}}}\n\n")
+
+    let mut state = String::new();
+    for (key, name) in [("x", "X"), ("y", "Y"), ("z", "Z")] {
+        let enabled = symbols
+            .read_bool(&format!("MAIN.stAxis{name}.bEnabled"))
+            .unwrap_or(false);
+        let homed = symbols
+            .read_bool(&format!("MAIN.stAxis{name}.bHomed"))
+            .unwrap_or(false);
+        let error = symbols
+            .read_i32(&format!("MAIN.stAxis{name}.nError"))
+            .unwrap_or(0);
+        state.push_str(&format!(
+            ",\"{key}e\":{enabled},\"{key}h\":{homed},\"{key}err\":{error}"
+        ));
+    }
+
+    format!("data: {{\"x\":{x:.3},\"y\":{y:.3},\"z\":{z:.3},\"alarm\":{alarm}{state}}}\n\n")
 }
 
 const PAGE: &str = r#"<!doctype html>
@@ -135,25 +152,37 @@ const PAGE: &str = r#"<!doctype html>
   .fill { height: 100%; width: 0; background: #4ade80; transition: width .1s linear; }
   .note { color: #888; font-size: .9rem; }
   .alarm { display: none; background: #7f1d1d; color: #fecaca; padding: .6rem 1rem; border-radius: 6px; margin: 1rem 0; font-weight: 600; }
+  .state { color: #888; font-size: .85rem; }
+  .live { float: right; font-size: .75rem; font-weight: 500; padding: .2rem .6rem; border-radius: 99px; background: #333; color: #aaa; }
+  .live.on { background: #14532d; color: #86efac; }
+  .live.off { background: #7f1d1d; color: #fecaca; }
 </style>
 </head>
 <body>
-<h1>adsim gantry</h1>
+<h1>adsim gantry <span class="live" id="live">connecting</span></h1>
 <p class="note">Live ADS simulation. Positions in mm, range 0-300.</p>
 <div class="alarm" id="alarm"></div>
-<div class="axis"><div class="label"><span>X</span><span id="x">0.000</span></div><div class="bar"><div class="fill" id="bx"></div></div></div>
-<div class="axis"><div class="label"><span>Y</span><span id="y">0.000</span></div><div class="bar"><div class="fill" id="by"></div></div></div>
-<div class="axis"><div class="label"><span>Z</span><span id="z">0.000</span></div><div class="bar"><div class="fill" id="bz"></div></div></div>
+<div class="axis"><div class="label"><span>X <span class="state" id="sx"></span></span><span id="x">0.000</span></div><div class="bar"><div class="fill" id="bx"></div></div></div>
+<div class="axis"><div class="label"><span>Y <span class="state" id="sy"></span></span><span id="y">0.000</span></div><div class="bar"><div class="fill" id="by"></div></div></div>
+<div class="axis"><div class="label"><span>Z <span class="state" id="sz"></span></span><span id="z">0.000</span></div><div class="bar"><div class="fill" id="bz"></div></div></div>
 <script>
 const source = new EventSource('/events');
+const live = document.getElementById('live');
+source.onopen = () => { live.textContent = 'live'; live.className = 'live on'; };
+source.onerror = () => { live.textContent = 'disconnected'; live.className = 'live off'; };
 source.onmessage = (event) => {
   const p = JSON.parse(event.data);
   for (const axis of ['x', 'y', 'z']) {
     document.getElementById(axis).textContent = p[axis].toFixed(3);
     document.getElementById('b' + axis).style.width = Math.min(100, p[axis] / 300 * 100) + '%';
+    const parts = [p[axis + 'e'] ? 'enabled' : 'disabled'];
+    if (p[axis + 'h']) parts.push('homed');
+    if (p[axis + 'err']) parts.push('error');
+    document.getElementById('s' + axis).textContent = parts.join(' · ');
   }
   const alarm = document.getElementById('alarm');
-  alarm.textContent = 'ALARM ' + p.alarm;
+  const axis = {1001: 'X', 1002: 'Y', 1003: 'Z'}[p.alarm];
+  alarm.textContent = axis ? 'ALARM ' + p.alarm + ' · axis ' + axis + ' soft limit' : '';
   alarm.style.display = p.alarm ? 'block' : 'none';
 };
 </script>
