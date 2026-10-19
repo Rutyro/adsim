@@ -83,6 +83,11 @@ dotnet test tests/dotnet
 
 The .NET test needs `target/debug/adsim` to exist first (`cargo build`).
 
+## Sources
+
+Protocol and implementation references are listed in
+[docs/SOURCES.md](docs/SOURCES.md).
+
 ## License
 
 MIT.
