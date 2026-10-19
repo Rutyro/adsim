@@ -1,4 +1,4 @@
-use adsim_symbols::{SymbolTable, TYPE_INT32, TYPE_LREAL};
+use adsim_symbols::{SymbolTable, TYPE_BOOL, TYPE_INT32, TYPE_LREAL};
 
 #[test]
 fn gantry_has_axis_symbols() {
@@ -123,6 +123,36 @@ fn index_group_access_reads_and_writes_a_symbol() {
         table.read_by_index(index_group, index_offset, 8),
         Some(2.5f64.to_le_bytes().to_vec())
     );
+}
+
+#[test]
+fn typed_accessors_read_and_write_values() {
+    let mut table = SymbolTable::gantry();
+
+    assert_eq!(table.read_f64("MAIN.stAxisX.fActPos"), Some(0.0));
+    table.write_f64("MAIN.stAxisX.fActPos", 1.25).expect("write f64");
+    assert_eq!(table.read_f64("MAIN.stAxisX.fActPos"), Some(1.25));
+
+    assert_eq!(table.read_bool("MAIN.stAxisX.bEnabled"), Some(false));
+    table
+        .write_bool("MAIN.stAxisX.bEnabled", true)
+        .expect("write bool");
+    assert_eq!(table.read_bool("MAIN.stAxisX.bEnabled"), Some(true));
+
+    assert_eq!(table.read_i32("MAIN.stAxisX.nError"), Some(0));
+    table.write_i32("MAIN.stAxisX.nError", 7).expect("write i32");
+    assert_eq!(table.read_i32("MAIN.stAxisX.nError"), Some(7));
+
+    assert_eq!(table.read_f64("MAIN.nope"), None);
+    assert_eq!(table.write_bool("MAIN.nope", true), None);
+}
+
+#[test]
+fn gantry_has_a_global_reset_symbol() {
+    let table = SymbolTable::gantry();
+    let reset = table.symbol("MAIN.bReset").expect("reset symbol");
+
+    assert_eq!(reset.data_type, TYPE_BOOL);
 }
 
 #[test]

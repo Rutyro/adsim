@@ -1,0 +1,9 @@
+[package]
+name = "adsim-plc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+adsim-axis.workspace = true
+adsim-symbols.workspace = true

@@ -6,4 +6,5 @@ license.workspace = true
 
 [dependencies]
 adsim-server.workspace = true
+adsim-symbols.workspace = true
 tokio.workspace = true

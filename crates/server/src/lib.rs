@@ -1,13 +1,17 @@
 //! ADS/TCP server for the adsim gantry.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use adsim_plc::GantryCycle;
 use adsim_symbols::SymbolTable;
 use ams::{
-    AMS_HEADER_LEN, Command, Packet, read_device_info_response, read_state_response,
+    AMS_HEADER_LEN, AmsAddress, AmsHeader, Command, FLAG_RESPONSE, Packet,
+    read_device_info_response, read_state_response,
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
 
 pub const DEVICE_NAME: &str = "adsim";
 pub const VERSION: (u8, u8, u16) = (0, 1, 0);
@@ -17,14 +21,120 @@ pub const ADSERR_DEVICE_SERVICE_NOT_SUPPORTED: u32 = 0x0701;
 const SYM_HNDBYNAME: u32 = 0xF003;
 const SYM_VALBYHND: u32 = 0xF005;
 const SYM_RELEASEHND: u32 = 0xF006;
+const SYM_VERSION: u32 = 0xF008;
 const SYM_INFOBYNAMEEX: u32 = 0xF009;
 const SYM_UPLOAD: u32 = 0xF00B;
 const SYM_UPLOADINFO2: u32 = 0xF00F;
 
 const MAX_FRAME_LEN: usize = 64 * 1024;
 
+struct Subscription {
+    handle: u32,
+    client: AmsAddress,
+    server: AmsAddress,
+    index_group: u32,
+    index_offset: u32,
+    length: u32,
+    last: Option<Vec<u8>>,
+}
+
+struct Subscriptions {
+    items: Vec<Subscription>,
+    next_handle: u32,
+}
+
+impl Subscriptions {
+    fn new() -> Self {
+        Self {
+            items: Vec::new(),
+            next_handle: 1,
+        }
+    }
+
+    fn add(&mut self, request: &Packet, data: &[u8], symbols: &SymbolTable) -> Option<u32> {
+        let [index_group, index_offset, length] = read_header(data)?;
+        let handle = self.next_handle;
+        self.next_handle += 1;
+        self.items.push(Subscription {
+            handle,
+            client: request.header.source,
+            server: request.header.target,
+            index_group,
+            index_offset,
+            length,
+            last: read_subscription_value(index_group, index_offset, length, symbols),
+        });
+        Some(handle)
+    }
+
+    fn remove(&mut self, handle: u32) -> bool {
+        let before = self.items.len();
+        self.items.retain(|item| item.handle != handle);
+        self.items.len() != before
+    }
+
+    fn changed(&mut self, symbols: &SymbolTable) -> Vec<Packet> {
+        let mut packets = Vec::new();
+        for item in &mut self.items {
+            let Some(value) =
+                read_subscription_value(item.index_group, item.index_offset, item.length, symbols)
+            else {
+                continue;
+            };
+            if item.last.as_deref() == Some(value.as_slice()) {
+                continue;
+            }
+            item.last = Some(value.clone());
+            packets.push(notification(item, &value));
+        }
+        packets
+    }
+}
+
+fn read_subscription_value(
+    index_group: u32,
+    index_offset: u32,
+    length: u32,
+    symbols: &SymbolTable,
+) -> Option<Vec<u8>> {
+    match index_group {
+        SYM_VALBYHND => symbols.read_handle(index_offset),
+        SYM_VERSION => Some(vec![0]),
+        _ => symbols.read_by_index(index_group, index_offset, length),
+    }
+}
+
+fn notification(item: &Subscription, value: &[u8]) -> Packet {
+    let mut data = Vec::with_capacity(16 + value.len());
+    data.extend_from_slice(&(12 + value.len() as u32).to_le_bytes());
+    data.extend_from_slice(&1u32.to_le_bytes());
+    data.extend_from_slice(&item.handle.to_le_bytes());
+    data.extend_from_slice(&(value.len() as u32).to_le_bytes());
+    data.extend_from_slice(value);
+
+    Packet {
+        header: AmsHeader {
+            target: item.client,
+            source: item.server,
+            command: Command::Notification,
+            flags: FLAG_RESPONSE,
+            error_code: 0,
+            invoke_id: 0,
+        },
+        data,
+    }
+}
+
 pub async fn serve(listener: TcpListener) -> std::io::Result<()> {
     let symbols = Arc::new(Mutex::new(SymbolTable::gantry()));
+    serve_with_symbols(listener, symbols).await
+}
+
+pub async fn serve_with_symbols(
+    listener: TcpListener,
+    symbols: Arc<Mutex<SymbolTable>>,
+) -> std::io::Result<()> {
+    spawn_cycle(Arc::clone(&symbols));
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -35,9 +145,54 @@ pub async fn serve(listener: TcpListener) -> std::io::Result<()> {
     }
 }
 
-async fn handle(mut stream: TcpStream, symbols: Arc<Mutex<SymbolTable>>) -> std::io::Result<()> {
+fn spawn_cycle(symbols: Arc<Mutex<SymbolTable>>) {
+    tokio::spawn(async move {
+        let mut cycle = GantryCycle::new();
+        let mut ticker = tokio::time::interval(Duration::from_millis(10));
+
+        loop {
+            ticker.tick().await;
+            let mut symbols = symbols.lock().expect("symbol table lock");
+            cycle.step(&mut symbols, 0.01);
+        }
+    });
+}
+
+async fn handle(stream: TcpStream, symbols: Arc<Mutex<SymbolTable>>) -> std::io::Result<()> {
+    let (mut reader, writer) = stream.into_split();
+    let (out, mut outgoing) = mpsc::channel::<Vec<u8>>(64);
+    let subscriptions = Arc::new(Mutex::new(Subscriptions::new()));
+
+    let writer_task = tokio::spawn(async move {
+        let mut writer = writer;
+        while let Some(frame) = outgoing.recv().await {
+            if writer.write_all(&frame).await.is_err() {
+                break;
+            }
+        }
+    });
+    let notifier = spawn_notifier(
+        Arc::clone(&symbols),
+        Arc::clone(&subscriptions),
+        out.clone(),
+    );
+
+    let result = read_requests(&mut reader, &symbols, &subscriptions, &out).await;
+
+    notifier.abort();
+    drop(out);
+    let _ = writer_task.await;
+    result
+}
+
+async fn read_requests<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    symbols: &Mutex<SymbolTable>,
+    subscriptions: &Mutex<Subscriptions>,
+    out: &mpsc::Sender<Vec<u8>>,
+) -> std::io::Result<()> {
     loop {
-        let Some(frame) = read_frame(&mut stream).await? else {
+        let Some(frame) = read_frame(reader).await? else {
             return Ok(());
         };
         let Ok(request) = Packet::decode(&frame) else {
@@ -47,23 +202,66 @@ async fn handle(mut stream: TcpStream, symbols: Arc<Mutex<SymbolTable>>) -> std:
 
         let response = {
             let mut symbols = symbols.lock().expect("symbol table lock");
-            request.response(answer(&request, &mut symbols))
+            let mut subscriptions = subscriptions.lock().expect("subscriptions lock");
+            request.response(answer(&request, &mut symbols, &mut subscriptions))
         };
-        stream.write_all(&response.encode()).await?;
+        if out.send(response.encode()).await.is_err() {
+            return Ok(());
+        }
     }
 }
 
-fn answer(request: &Packet, symbols: &mut SymbolTable) -> Vec<u8> {
+fn spawn_notifier(
+    symbols: Arc<Mutex<SymbolTable>>,
+    subscriptions: Arc<Mutex<Subscriptions>>,
+    out: mpsc::Sender<Vec<u8>>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_millis(20));
+        loop {
+            ticker.tick().await;
+            let packets = {
+                let symbols = symbols.lock().expect("symbol table lock");
+                let mut subscriptions = subscriptions.lock().expect("subscriptions lock");
+                subscriptions.changed(&symbols)
+            };
+            for packet in packets {
+                if out.send(packet.encode()).await.is_err() {
+                    return;
+                }
+            }
+        }
+    })
+}
+
+fn answer(
+    request: &Packet,
+    symbols: &mut SymbolTable,
+    subscriptions: &mut Subscriptions,
+) -> Vec<u8> {
     match request.header.command {
         Command::ReadState => read_state_response(0, ADS_STATE_RUN, 0),
         Command::ReadDeviceInfo => read_device_info_response(0, VERSION, DEVICE_NAME),
         Command::Read => answer_read(&request.data, symbols),
         Command::Write => answer_write(&request.data, symbols),
         Command::ReadWrite => answer_read_write(&request.data, symbols),
-        Command::AddNotification => {
-            let mut out = ADSERR_DEVICE_SERVICE_NOT_SUPPORTED.to_le_bytes().to_vec();
-            out.extend_from_slice(&0u32.to_le_bytes());
-            out
+        Command::AddNotification => match subscriptions.add(request, &request.data, symbols) {
+            Some(handle) => result_with_data(0, &handle.to_le_bytes()),
+            None => result_with_data(ADSERR_DEVICE_SERVICE_NOT_SUPPORTED, &[]),
+        },
+        Command::DeleteNotification => {
+            let handle = request
+                .data
+                .get(0..4)
+                .map(|bytes| u32::from_le_bytes(bytes.try_into().expect("handle")));
+            let removed = handle.is_some_and(|handle| subscriptions.remove(handle));
+            (if removed {
+                0
+            } else {
+                ADSERR_DEVICE_SERVICE_NOT_SUPPORTED
+            })
+            .to_le_bytes()
+            .to_vec()
         }
         _ => ADSERR_DEVICE_SERVICE_NOT_SUPPORTED.to_le_bytes().to_vec(),
     }
@@ -204,7 +402,7 @@ fn trace(request: &Packet) {
     );
 }
 
-async fn read_frame(stream: &mut TcpStream) -> std::io::Result<Option<Vec<u8>>> {
+async fn read_frame<R: AsyncRead + Unpin>(stream: &mut R) -> std::io::Result<Option<Vec<u8>>> {
     let mut head = [0u8; 6];
     match stream.read_exact(&mut head).await {
         Ok(_) => {}

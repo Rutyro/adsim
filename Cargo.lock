@@ -7,13 +7,27 @@ name = "adsim"
 version = "0.1.0"
 dependencies = [
  "adsim-server",
+ "adsim-symbols",
  "tokio",
+]
+
+[[package]]
+name = "adsim-axis"
+version = "0.1.0"
+
+[[package]]
+name = "adsim-plc"
+version = "0.1.0"
+dependencies = [
+ "adsim-axis",
+ "adsim-symbols",
 ]
 
 [[package]]
 name = "adsim-server"
 version = "0.1.0"
 dependencies = [
+ "adsim-plc",
  "adsim-symbols",
  "ams",
  "tokio",

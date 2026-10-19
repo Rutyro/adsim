@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 ams.workspace = true
 adsim-symbols.workspace = true
+adsim-plc.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

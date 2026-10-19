@@ -1,7 +1,8 @@
 mod common;
 
-use ams::{Command, Packet};
-use common::{request, send, start_server};
+use ams::{Command, FLAG_RESPONSE, Packet};
+use common::{receive, request, send, start_server};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
 const SYM_HNDBYNAME: u32 = 0xF003;
@@ -63,7 +64,7 @@ async fn reports_symbol_upload_info2() {
     let info = payload(&response);
     assert_eq!(
         u32::from_le_bytes(info[0..4].try_into().expect("symbol count")),
-        15
+        16
     );
     assert!(u32::from_le_bytes(info[4..8].try_into().expect("symbol size")) > 0);
     assert_eq!(&info[8..24], &[0u8; 16]);
@@ -223,9 +224,175 @@ async fn add_notification_returns_result_and_handle() {
 
     let response = send(&mut stream, &request(Command::AddNotification, 26, data)).await;
 
-    assert_eq!(response.data.len(), 8);
+    assert_eq!(result(&response), 0);
+    assert_eq!(length(&response), 4);
+    assert_ne!(
+        u32::from_le_bytes(payload(&response)[0..4].try_into().expect("handle")),
+        0
+    );
+}
+
+#[tokio::test]
+async fn deletes_a_notification_handle() {
+    let addr = start_server().await;
+    let mut stream = TcpStream::connect(addr).await.expect("connect");
+    let handle = get_handle(&mut stream, "MAIN.stAxisX.fActPos").await;
+
+    let mut data = Vec::new();
+    data.extend_from_slice(&SYM_VALBYHND.to_le_bytes());
+    data.extend_from_slice(&handle.to_le_bytes());
+    data.extend_from_slice(&8u32.to_le_bytes());
+    data.extend_from_slice(&4u32.to_le_bytes());
+    data.extend_from_slice(&0u32.to_le_bytes());
+    data.extend_from_slice(&0u32.to_le_bytes());
+    let response = send(&mut stream, &request(Command::AddNotification, 27, data)).await;
+    let notification_handle =
+        u32::from_le_bytes(payload(&response)[0..4].try_into().expect("notification handle"));
+
+    let response = send(
+        &mut stream,
+        &request(
+            Command::DeleteNotification,
+            28,
+            notification_handle.to_le_bytes().to_vec(),
+        ),
+    )
+    .await;
+    assert_eq!(result(&response), 0);
+
+    let response = send(
+        &mut stream,
+        &request(
+            Command::DeleteNotification,
+            29,
+            notification_handle.to_le_bytes().to_vec(),
+        ),
+    )
+    .await;
     assert_eq!(result(&response), 0x0701);
-    assert_eq!(&response.data[4..8], &0u32.to_le_bytes());
+}
+
+async fn get_handle(stream: &mut TcpStream, name: &str) -> u32 {
+    let response = send(stream, &handle_request(name, 100)).await;
+    assert_eq!(result(&response), 0);
+    u32::from_le_bytes(payload(&response)[0..4].try_into().expect("handle"))
+}
+
+async fn write_value(stream: &mut TcpStream, handle: u32, value: &[u8]) {
+    let response = send(
+        stream,
+        &request(
+            Command::Write,
+            101,
+            write_request(SYM_VALBYHND, handle, value),
+        ),
+    )
+    .await;
+    assert_eq!(result(&response), 0);
+}
+
+async fn read_value(stream: &mut TcpStream, handle: u32) -> Vec<u8> {
+    let response = send(
+        stream,
+        &request(
+            Command::Read,
+            102,
+            read_request(SYM_VALBYHND, handle, 8),
+        ),
+    )
+    .await;
+    assert_eq!(result(&response), 0);
+    payload(&response).to_vec()
+}
+
+#[tokio::test]
+async fn notifies_a_subscribed_symbol_when_it_changes() {
+    let addr = start_server().await;
+    let mut stream = TcpStream::connect(addr).await.expect("connect");
+    let handle = get_handle(&mut stream, "MAIN.stAxisX.fSetPos").await;
+
+    let mut data = Vec::new();
+    data.extend_from_slice(&SYM_VALBYHND.to_le_bytes());
+    data.extend_from_slice(&handle.to_le_bytes());
+    data.extend_from_slice(&8u32.to_le_bytes());
+    data.extend_from_slice(&4u32.to_le_bytes());
+    data.extend_from_slice(&0u32.to_le_bytes());
+    data.extend_from_slice(&0u32.to_le_bytes());
+    let response = send(&mut stream, &request(Command::AddNotification, 50, data)).await;
+    assert_eq!(result(&response), 0);
+    assert_eq!(length(&response), 4);
+    let notification_handle =
+        u32::from_le_bytes(payload(&response)[0..4].try_into().expect("notification handle"));
+
+    stream
+        .write_all(&request(
+            Command::Write,
+            101,
+            write_request(SYM_VALBYHND, handle, &1.25f64.to_le_bytes()),
+        ))
+        .await
+        .expect("write request");
+
+    let notification = loop {
+        let packet = receive(&mut stream).await;
+        if packet.header.command == Command::Notification {
+            break packet;
+        }
+        assert_eq!(result(&packet), 0);
+    };
+    assert_eq!(notification.header.flags, FLAG_RESPONSE);
+
+    let data = &notification.data;
+    assert_eq!(
+        u32::from_le_bytes(data[0..4].try_into().expect("payload length")),
+        20
+    );
+    assert_eq!(
+        u32::from_le_bytes(data[4..8].try_into().expect("stamp count")),
+        1
+    );
+    assert_eq!(
+        u32::from_le_bytes(data[8..12].try_into().expect("notification handle")),
+        notification_handle
+    );
+    assert_eq!(
+        u32::from_le_bytes(data[12..16].try_into().expect("sample size")),
+        8
+    );
+    assert_eq!(&data[16..24], &1.25f64.to_le_bytes());
+}
+
+#[tokio::test]
+async fn an_enabled_axis_moves_to_its_setpoint() {
+    let addr = start_server().await;
+    let mut stream = TcpStream::connect(addr).await.expect("connect");
+
+    let enabled = get_handle(&mut stream, "MAIN.stAxisX.bEnabled").await;
+    let homed = get_handle(&mut stream, "MAIN.stAxisX.bHomed").await;
+    let setpoint = get_handle(&mut stream, "MAIN.stAxisX.fSetPos").await;
+    let position = get_handle(&mut stream, "MAIN.stAxisX.fActPos").await;
+    let error = get_handle(&mut stream, "MAIN.stAxisX.nError").await;
+
+    write_value(&mut stream, enabled, &[1]).await;
+    write_value(&mut stream, homed, &[1]).await;
+    write_value(&mut stream, setpoint, &10.0f64.to_le_bytes()).await;
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let value = read_value(&mut stream, position).await;
+        let actual = f64::from_le_bytes(value[..8].try_into().expect("position"));
+        if (actual - 10.0).abs() < 0.01 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "axis did not reach target: {actual}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let value = read_value(&mut stream, error).await;
+    assert_eq!(i32::from_le_bytes(value[..4].try_into().expect("error")), 0);
 }
 
 #[tokio::test]

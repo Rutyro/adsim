@@ -117,6 +117,14 @@ impl SymbolTable {
             offset += 8;
         }
 
+        table.add(
+            "MAIN.bReset".to_string(),
+            "BOOL",
+            TYPE_BOOL,
+            vec![0],
+            offset,
+        );
+
         table
     }
 
@@ -211,6 +219,37 @@ impl SymbolTable {
         let length = data.len().min(symbol.data.len());
         symbol.data[..length].copy_from_slice(&data[..length]);
         Some(())
+    }
+
+    pub fn read_f64(&self, name: &str) -> Option<f64> {
+        let bytes: [u8; 8] = self.symbol(name)?.data.get(..8)?.try_into().ok()?;
+        Some(f64::from_le_bytes(bytes))
+    }
+
+    pub fn write_f64(&mut self, name: &str, value: f64) -> Option<()> {
+        self.write_named(name, &value.to_le_bytes())
+    }
+
+    pub fn read_bool(&self, name: &str) -> Option<bool> {
+        Some(self.symbol(name)?.data.first().copied()? != 0)
+    }
+
+    pub fn write_bool(&mut self, name: &str, value: bool) -> Option<()> {
+        self.write_named(name, &[u8::from(value)])
+    }
+
+    pub fn read_i32(&self, name: &str) -> Option<i32> {
+        let bytes: [u8; 4] = self.symbol(name)?.data.get(..4)?.try_into().ok()?;
+        Some(i32::from_le_bytes(bytes))
+    }
+
+    pub fn write_i32(&mut self, name: &str, value: i32) -> Option<()> {
+        self.write_named(name, &value.to_le_bytes())
+    }
+
+    fn write_named(&mut self, name: &str, data: &[u8]) -> Option<()> {
+        let index = self.symbols.iter().position(|symbol| symbol.name == name)?;
+        self.write_symbol(index, data)
     }
 
     pub fn upload_info2(&self) -> Vec<u8> {

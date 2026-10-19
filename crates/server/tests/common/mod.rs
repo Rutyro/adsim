@@ -26,8 +26,7 @@ pub async fn start_server() -> std::net::SocketAddr {
     addr
 }
 
-pub async fn send(stream: &mut TcpStream, frame: &[u8]) -> Packet {
-    stream.write_all(frame).await.expect("write request");
+pub async fn receive(stream: &mut TcpStream) -> Packet {
     let mut head = [0u8; 6];
     stream.read_exact(&mut head).await.expect("frame header");
     let len = u32::from_le_bytes(head[2..6].try_into().expect("length")) as usize;
@@ -38,4 +37,9 @@ pub async fn send(stream: &mut TcpStream, frame: &[u8]) -> Packet {
         .await
         .expect("frame body");
     Packet::decode(&response).expect("response frame")
+}
+
+pub async fn send(stream: &mut TcpStream, frame: &[u8]) -> Packet {
+    stream.write_all(frame).await.expect("write request");
+    receive(stream).await
 }
