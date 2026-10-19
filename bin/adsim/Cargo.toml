@@ -1,0 +1,9 @@
+[package]
+name = "adsim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+adsim-server.workspace = true
+tokio.workspace = true

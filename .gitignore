@@ -1,0 +1,6 @@
+/target
+**/target
+.superpowers/
+tests/dotnet/bin/
+tests/dotnet/obj/
+*.user
